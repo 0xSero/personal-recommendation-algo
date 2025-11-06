@@ -1,0 +1,243 @@
+# Model-agnostic configuration for personal recommender
+
+# Model providers - swap these to change models without code changes
+models:
+  # Embedding model (for vectorizing content)
+  embedding:
+    provider: "sentence_transformers"  # Options: sentence_transformers, openai, custom
+    model_name: "BAAI/bge-large-en-v1.5"
+    device: "cuda:0"
+    batch_size: 32
+    max_seq_length: 512
+    normalize_embeddings: true
+    # Alternative options (commented out):
+    # model_name: "BAAI/bge-m3"  # multilingual
+    # model_name: "thenlper/gte-small"  # faster, smaller
+    # model_name: "nomic-ai/nomic-embed-text-v1"  # good quality
+
+  # Cross-encoder reranker
+  reranker:
+    provider: "sentence_transformers"  # Options: sentence_transformers, custom
+    model_name: "BAAI/bge-reranker-large"
+    device: "cuda:1"
+    batch_size: 16
+    max_seq_length: 512
+    # Alternative:
+    # model_name: "BAAI/bge-reranker-base"  # lighter
+
+  # LLM for summaries, enrichment, explanations
+  llm:
+    provider: "openai_compatible"  # Options: openai_compatible, transformers, custom
+    base_url: "http://localhost:8000/v1"
+    api_key: "dummy"  # vLLM doesn't need real key
+    model_name: "mistralai/Mixtral-8x7B-Instruct-v0.1"
+    max_tokens: 512
+    temperature: 0.7
+    timeout: 120
+    # Alternative models (change in docker-compose):
+    # model_name: "Qwen/Qwen2.5-32B-Instruct"
+    # model_name: "meta-llama/Meta-Llama-3.1-70B-Instruct"
+
+  # ASR for transcription
+  asr:
+    provider: "whisper"  # Options: whisper, faster-whisper, custom
+    model_name: "large-v3"
+    device: "cuda:2"
+    compute_type: "float16"
+    language: null  # auto-detect
+    # Alternative:
+    # model_name: "medium"  # faster, less accurate
+
+# Vector database
+vector_db:
+  provider: "qdrant"  # Options: qdrant, faiss, custom
+  host: "localhost"
+  port: 6333
+  collection_name: "items"
+  distance_metric: "Cosine"
+  on_disk_payload: true
+
+# Relational database for events, metadata, counters
+relational_db:
+  provider: "duckdb"  # Options: duckdb, sqlite, postgres
+  path: "./data/recommender.duckdb"
+
+# Recommendation parameters
+recommendation:
+  # Candidate generation
+  candidate_generation:
+    num_candidates: 500
+    strategies:
+      - name: "taste_centroid"
+        weight: 0.4
+        top_k: 200
+      - name: "session_context"
+        weight: 0.3
+        top_k: 150
+        recent_items: 5
+      - name: "topic_slots"
+        weight: 0.2
+        top_k: 100
+        num_topics: 5
+      - name: "exploration"
+        weight: 0.1
+        top_k: 50
+
+  # Reranking weights (must sum to ~1.0)
+  reranking:
+    weights:
+      cosine_global: 0.35
+      cosine_session: 0.20
+      cross_encoder: 0.25
+      creator_prior: 0.08
+      source_prior: 0.05
+      novelty: 0.04
+      length_match: 0.03
+
+    # Decay and penalties
+    recency_half_life_days:
+      default: 14
+      news: 7
+      evergreen: 60
+      podcast: 30
+
+    repetition_penalty: 0.5
+    diversity_lambda: 0.7  # MMR lambda (1.0 = full diversity, 0.0 = full relevance)
+
+  # Exploration (Thompson Sampling)
+  exploration:
+    enabled: true
+    arms:
+      - name: "new_creators"
+        slots: 2
+      - name: "deep_dives"
+        slots: 2
+      - name: "short_sharp"
+        slots: 1
+      - name: "hot_news"
+        slots: 1
+    alpha_prior: 1.0
+    beta_prior: 1.0
+
+  # Feedback and rewards
+  feedback:
+    reward_formula:
+      completion_weight: 0.6
+      dwell_weight: 0.2
+      like_weight: 0.2
+      bounce_penalty: -0.3
+      dwell_cap_seconds: 120
+
+    # Exponential moving average decay for priors
+    prior_decay: 0.95
+    min_samples_for_prior: 3
+
+# Content sources
+sources:
+  youtube:
+    enabled: true
+    poll_interval_hours: 6
+    max_videos_per_poll: 100
+    download_captions: true
+
+  rss:
+    enabled: true
+    feeds_file: "./config/rss_feeds.txt"
+    poll_interval_hours: 1
+
+  browser_history:
+    enabled: true
+    chrome_path: "~/.config/google-chrome/Default/History"
+    firefox_path: "~/.mozilla/firefox/*.default-release/places.sqlite"
+    poll_interval_hours: 12
+
+  local_files:
+    enabled: true
+    watch_dirs:
+      - "~/Documents/notes"
+      - "~/Downloads"
+    file_patterns: ["*.md", "*.txt", "*.pdf"]
+    poll_interval_hours: 1
+
+  podcasts:
+    enabled: true
+    feeds_file: "./config/podcast_feeds.txt"
+    download_audio: true
+    transcribe: true
+    poll_interval_hours: 6
+
+# Enrichment
+enrichment:
+  # Your taxonomy of topics (customize this!)
+  topics:
+    - "Machine Learning"
+    - "Software Engineering"
+    - "Philosophy"
+    - "History"
+    - "Science"
+    - "Technology"
+    - "Business"
+    - "Psychology"
+    - "Health"
+    - "Art"
+    - "Music"
+    - "Politics"
+    - "Economics"
+    - "Mathematics"
+    - "Physics"
+    - "Biology"
+    - "Chemistry"
+    - "Literature"
+    - "Film"
+    - "Gaming"
+
+  # LLM prompts (templates)
+  prompts:
+    summarize: |
+      Summarize the following content for an informed generalist in 5 bullet points (max 150 words total).
+      Then add:
+      - Time-to-value: (1 sentence explaining how quickly someone gets value)
+      - Audience: (novice/intermediate/advanced)
+      - Tags: (select 3 most relevant from: {topics})
+
+      Content:
+      Title: {title}
+      Text: {text}
+
+    relevance_query: |
+      I'm looking for content that matches:
+      - Recent interests: {recent_topics}
+      - Time budget: {time_budget_minutes} minutes
+      - Preferred format: {preferred_format}
+      - Avoid: {muted_topics}
+
+      Rate how relevant this content is (0-10).
+
+    explanation: |
+      Why am I recommending this item to the user?
+
+      User profile:
+      - Recently opened: {recent_items}
+      - Top topics: {top_topics}
+      - Preferred creators: {top_creators}
+
+      Recommended item:
+      - Title: {title}
+      - Summary: {summary}
+      - Creator: {creator}
+
+      Provide a 1-2 sentence explanation starting with "Because..."
+
+# API server
+server:
+  host: "0.0.0.0"
+  port: 8080
+  reload: false
+  log_level: "info"
+  cors_origins: ["*"]
+
+# Data storage
+storage:
+  data_dir: "./data"
+  cache_dir: "./cache"
+  models_dir: "./models"  # for local model weights

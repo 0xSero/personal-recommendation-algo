@@ -1,0 +1,15 @@
+# RSS Feeds
+# Add one feed URL per line
+# Lines starting with # are comments
+
+# Tech News
+https://news.ycombinator.com/rss
+https://hnrss.org/frontpage
+
+# AI/ML
+https://arxiv.org/rss/cs.AI
+https://arxiv.org/rss/cs.LG
+
+# Blogs (examples - replace with your favorites)
+# https://blog.example.com/feed
+# https://another-blog.com/rss

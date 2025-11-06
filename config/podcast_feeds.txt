@@ -1,0 +1,8 @@
+# Podcast Feeds
+# Add one feed URL per line
+# Lines starting with # are comments
+
+# Add your favorite podcast RSS feeds here
+# Examples:
+# https://feeds.example.com/podcast1
+# https://feeds.example.com/podcast2

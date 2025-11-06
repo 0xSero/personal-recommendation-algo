@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  # Vector database (Qdrant)
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: recommender-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    environment:
+      - QDRANT_ALLOW_RECOVERY_MODE=true
+    restart: unless-stopped
+
+  # LLM inference server (vLLM with Mixtral-8x7B)
+  vllm:
+    image: vllm/vllm-openai:latest
+    container_name: recommender-vllm
+    ports:
+      - "8000:8000"
+    command:
+      - --model
+      - mistralai/Mixtral-8x7B-Instruct-v0.1
+      - --tensor-parallel-size
+      - "6"  # Use all 6 GPUs
+      - --max-model-len
+      - "8192"
+      - --dtype
+      - auto
+      - --gpu-memory-utilization
+      - "0.90"
+    environment:
+      - VLLM_WORKER_MULTIPROC_METHOD=spawn
+      - CUDA_VISIBLE_DEVICES=0,1,2,3,4,5
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 6
+              capabilities: [gpu]
+    restart: unless-stopped
+    shm_size: 16gb
+
+  # Recommender API server
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: recommender-api
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./cache:/app/cache
+      - ./config.yaml:/app/config.yaml
+      - ./config:/app/config
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+      - LLM_BASE_URL=http://vllm:8000/v1
+      - CUDA_VISIBLE_DEVICES=-1  # API runs on CPU
+    depends_on:
+      - qdrant
+      - vllm
+    restart: unless-stopped
+    command: uvicorn recommender.api.server:app --host 0.0.0.0 --port 8080
+
+  # Embedding/Reranker service (runs on GPU)
+  # This service handles embedding generation and reranking
+  # Separate from API to better utilize GPU resources
+  embedder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: recommender-embedder
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./data:/app/data
+      - ./cache:/app/cache
+      - ./models:/app/models
+      - ./config.yaml:/app/config.yaml
+    environment:
+      - CUDA_VISIBLE_DEVICES=0  # Use first GPU for embeddings
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    # This would run a separate embedding service
+    # For now, embeddings are done in main API
+    command: sleep infinity
+
+volumes:
+  qdrant_data:
